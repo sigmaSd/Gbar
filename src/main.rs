@@ -38,6 +38,9 @@ fn start_server(tx: glib::Sender<Vec<String>>, rx2: mpsc::Receiver<String>) {
 
             let mut args = String::new();
             recv_stream.read_to_string(&mut args).unwrap();
+            if args.is_empty() {
+                continue;
+            }
             let args = args.lines().map(ToOwned::to_owned).collect();
 
             tx.send(args).unwrap();
@@ -59,6 +62,7 @@ impl Bar {
         let fuzzy = ListBox::new();
         let fuzzy_c = fuzzy.clone();
         let fuzzy_c2 = fuzzy.clone();
+        let fuzzy_c3 = fuzzy.clone();
 
         let args: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(vec![]));
         let args_c = args.clone();
@@ -132,6 +136,9 @@ impl Bar {
             let mut args = args.borrow_mut();
             args.clear();
             *args = new_args;
+            args.iter().take(MAX_VISIBLE).for_each(|a| {
+                fuzzy_c3.add(&Label::new(Some(&a)));
+            });
             win.show_all();
             glib::Continue(true)
         });
