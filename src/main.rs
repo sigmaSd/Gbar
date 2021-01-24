@@ -141,6 +141,12 @@ impl Bar {
             args.iter().take(MAX_VISIBLE).for_each(|a| {
                 fuzzy_c3.add(&Label::new(Some(&a)));
             });
+            fuzzy_c3.select_row(Some(
+                &fuzzy_c3.get_children()[0]
+                    .clone()
+                    .downcast::<ListBoxRow>()
+                    .unwrap(),
+            ));
             win.show_all();
             glib::Continue(true)
         });
