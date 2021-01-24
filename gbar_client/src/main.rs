@@ -1,9 +1,11 @@
 use std::io::prelude::*;
 use std::net::TcpStream;
 
+const ADDRESS: &str = "127.0.0.1:38451";
+
 fn main() {
-    let mut send_stream = TcpStream::connect("127.0.0.1:38451").unwrap();
-    let mut recv_stream = TcpStream::connect("127.0.0.1:38451").unwrap();
+    let mut send_stream = TcpStream::connect(ADDRESS).unwrap();
+    let mut recv_stream = TcpStream::connect(ADDRESS).unwrap();
     let mut bin = String::new();
     let args: Vec<u8> = std::io::stdin()
         .lock()
