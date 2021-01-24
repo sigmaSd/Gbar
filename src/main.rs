@@ -120,6 +120,8 @@ impl Bar {
                     //let _ = std::process::Command::new(bin.get_text().to_string()).spawn();
                     //println!("{}", bin.get_text());
                     tx2.send(bin.get_text().to_string()).unwrap();
+                } else {
+                    tx2.send("".into()).unwrap();
                 }
 
                 //gtk::main_quit();
