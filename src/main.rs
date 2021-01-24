@@ -104,6 +104,14 @@ impl Bar {
             });
         };
 
+        let tx2_c = tx2.clone();
+        let hide_c = hide.clone();
+        win.connect_delete_event(move |_, _| {
+            tx2_c.send("".into()).unwrap();
+            //gtk::main_quit();
+            hide_c();
+            gtk::Inhibit(true)
+        });
         win.connect_key_press_event(move |_win, key| match key.get_keyval() {
             gdk::keys::constants::Escape => {
                 tx2.send("".into()).unwrap();
