@@ -82,13 +82,14 @@ fn start_gui(rx: glib::Receiver<Vec<String>>, tx2: mpsc::Sender<String>) {
     let fuzzy = ListBox::new();
 
     input.connect_changed(clone!(fuzzy,args => move |ent| {
-        let text = ent.get_text().to_string();
+        let text = ent.get_text();
+        let text = text.as_str();
         fuzzy.get_children().iter().for_each(|c| {
             fuzzy.remove(c);
         });
         args.borrow()
             .iter()
-            .filter(|a| a.contains(&text))
+            .filter(|a| a.contains(text))
             .take(MAX_VISIBLE)
             .for_each(|a| {
                 fuzzy.add(&Label::new(Some(&a)));
