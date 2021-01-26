@@ -13,10 +13,22 @@ use std::sync::mpsc;
 const MAX_VISIBLE: usize = 10;
 const ADDRESS: &str = "127.0.0.1:38451";
 
-macro_rules! shadow_clone {
-       ($($i:ident),+) => ($(let $i = $i.clone();)+)
-   }
-
+macro_rules! clone {
+    (@param _) => ( _ );
+    (@param $x:ident) => ( $x );
+    ($($n:ident),+ => move || $body:expr) => (
+        {
+            $( let $n = $n.clone(); )+
+            move || $body
+        }
+    );
+    ($($n:ident),+ => move |$($p:tt),+| $body:expr) => (
+        {
+            $( let $n = $n.clone(); )+
+            move |$(clone!(@param $p),)+| $body
+        }
+    );
+}
 fn main() {
     if TcpStream::connect(ADDRESS).is_ok() {
         // gbar is already running
@@ -69,98 +81,84 @@ fn start_gui(rx: glib::Receiver<Vec<String>>, tx2: mpsc::Sender<String>) {
     let input = Entry::new();
     let fuzzy = ListBox::new();
 
-    {
-        shadow_clone!(fuzzy, args, input);
-        input.connect_changed(move |ent| {
-            let text = ent.get_text().to_string();
-            fuzzy.get_children().iter().for_each(|c| {
-                fuzzy.remove(c);
-            });
-            args.borrow()
-                .iter()
-                .filter(|a| a.contains(&text))
-                .take(MAX_VISIBLE)
-                .for_each(|a| {
-                    fuzzy.add(&Label::new(Some(&a)));
-                });
-            fuzzy.show_all();
-            if fuzzy.get_children().is_empty() {
-                return;
-            }
-            fuzzy.select_row(Some(
-                &fuzzy.get_children()[0]
-                    .clone()
-                    .downcast::<ListBoxRow>()
-                    .unwrap(),
-            ));
+    input.connect_changed(clone!(fuzzy,args => move |ent| {
+        let text = ent.get_text().to_string();
+        fuzzy.get_children().iter().for_each(|c| {
+            fuzzy.remove(c);
         });
-    }
-
-    let hide = {
-        shadow_clone!(win, input, fuzzy);
-        move || {
-            win.hide();
-            input.set_text("");
-            fuzzy.get_children().iter().for_each(|c| {
-                fuzzy.remove(c);
+        args.borrow()
+            .iter()
+            .filter(|a| a.contains(&text))
+            .take(MAX_VISIBLE)
+            .for_each(|a| {
+                fuzzy.add(&Label::new(Some(&a)));
             });
+        fuzzy.show_all();
+        if fuzzy.get_children().is_empty() {
+            return;
         }
-    };
+        fuzzy.select_row(Some(
+            &fuzzy.get_children()[0]
+                .clone()
+                .downcast::<ListBoxRow>()
+                .unwrap(),
+        ));
+    }));
 
-    {
-        shadow_clone!(win, tx2, hide);
-        win.connect_delete_event(move |_, _| {
+    let hide = clone!(win,input,fuzzy =>
+    move || {
+        win.hide();
+        input.set_text("");
+        fuzzy.get_children().iter().for_each(|c| {
+            fuzzy.remove(c);
+        });
+    });
+
+    win.connect_delete_event(clone!(tx2, hide => move |_, _| {
+        tx2.send("".into()).unwrap();
+        hide();
+        gtk::Inhibit(true)
+    }));
+
+    win.connect_key_press_event(clone!(fuzzy => move |_win, key| match key.get_keyval() {
+        gdk::keys::constants::Escape => {
             tx2.send("".into()).unwrap();
             hide();
-            gtk::Inhibit(true)
-        });
-    }
-
-    {
-        shadow_clone!(fuzzy);
-        win.connect_key_press_event(move |_win, key| match key.get_keyval() {
-            gdk::keys::constants::Escape => {
+            gtk::Inhibit(false)
+        }
+        gdk::keys::constants::Return => {
+            if !fuzzy.get_children().is_empty() {
+                let bin: Label = fuzzy.get_selected_row().unwrap().get_children()[0]
+                    .clone()
+                    .downcast()
+                    .unwrap();
+                tx2.send(bin.get_text().to_string()).unwrap();
+            } else {
                 tx2.send("".into()).unwrap();
-                hide();
-                gtk::Inhibit(false)
             }
-            gdk::keys::constants::Return => {
-                if !fuzzy.get_children().is_empty() {
-                    let bin: Label = fuzzy.get_selected_row().unwrap().get_children()[0]
-                        .clone()
-                        .downcast()
-                        .unwrap();
-                    tx2.send(bin.get_text().to_string()).unwrap();
-                } else {
-                    tx2.send("".into()).unwrap();
-                }
-                hide();
-                gtk::Inhibit(false)
-            }
-            _ => gtk::Inhibit(false),
-        });
-    }
+            hide();
+            gtk::Inhibit(false)
+        }
+        _ => gtk::Inhibit(false),
+    }));
 
     vbox.add(&input);
     vbox.add(&fuzzy);
     win.add(&vbox);
 
-    {
-        shadow_clone!(win, fuzzy);
-        rx.attach(None, move |new_args| {
-            let mut args = args.borrow_mut();
-            *args = new_args;
-            args.iter().take(MAX_VISIBLE).for_each(|a| {
-                fuzzy.add(&Label::new(Some(&a)));
-            });
-            fuzzy.select_row(Some(
-                &fuzzy.get_children()[0]
-                    .clone()
-                    .downcast::<ListBoxRow>()
-                    .unwrap(),
-            ));
-            win.show_all();
-            glib::Continue(true)
+    rx.attach(None, move |new_args| {
+        let mut args = args.borrow_mut();
+        *args = new_args;
+        args.iter().take(MAX_VISIBLE).for_each(|a| {
+            fuzzy.add(&Label::new(Some(&a)));
         });
-    }
+        fuzzy.select_row(Some(
+            &fuzzy.get_children()[0]
+                .clone()
+                .downcast::<ListBoxRow>()
+                .unwrap(),
+        ));
+        win.show_all();
+        glib::Continue(true)
+    });
 }
