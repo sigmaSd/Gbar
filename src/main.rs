@@ -1,8 +1,3 @@
-use gtk::prelude::Cast;
-use gtk::{
-    ContainerExt, EditableSignals, Entry, EntryExt, GtkWindowExt, Label, LabelExt, ListBox,
-    ListBoxExt, ListBoxRow, WidgetExt, Window, WindowType,
-};
 use std::cell::RefCell;
 use std::io::Read;
 use std::io::Write;
@@ -12,6 +7,15 @@ use std::sync::mpsc;
 
 const MAX_VISIBLE: usize = 10;
 const ADDRESS: &str = "127.0.0.1:38451";
+
+use gio::{ApplicationExt, ListModelExt};
+use glib::signal::Inhibit;
+use glib::Cast;
+use gtk::{
+    prelude::ApplicationExtManual, Application, BoxExt, EditableExt, Entry, EntryExt,
+    EventControllerKey, GtkApplicationExt, GtkWindowExt, Label, ListBox, ListBoxRow, ListBoxRowExt,
+    WidgetExt, Window,
+};
 
 macro_rules! clone {
     (@param _) => ( _ );
@@ -34,15 +38,11 @@ fn main() {
         // gbar is already running
         return;
     }
-
     gtk::init().unwrap();
-
     let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
     let (tx2, rx2) = mpsc::channel();
     start_server(tx, rx2);
     start_gui(rx, tx2);
-
-    gtk::main();
 }
 
 fn start_server(tx: glib::Sender<Vec<String>>, rx2: mpsc::Receiver<String>) {
@@ -73,8 +73,10 @@ fn start_server(tx: glib::Sender<Vec<String>>, rx2: mpsc::Receiver<String>) {
 
 fn start_gui(rx: glib::Receiver<Vec<String>>, tx2: mpsc::Sender<String>) {
     let args: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(vec![]));
+    let ev = EventControllerKey::new();
 
-    let win = Window::new(WindowType::Toplevel);
+    let win = Window::new();
+    win.set_decorated(false);
     win.set_default_size(400, 300);
 
     let vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -82,55 +84,36 @@ fn start_gui(rx: glib::Receiver<Vec<String>>, tx2: mpsc::Sender<String>) {
     let fuzzy = ListBox::new();
 
     input.connect_changed(clone!(fuzzy,args => move |ent| {
-        let text = ent.get_text();
+        let text = ent.get_text().unwrap();
         let text = text.as_str();
-        fuzzy.get_children().iter().for_each(|c| {
-            fuzzy.remove(c);
+
+        remove_all_children(&fuzzy);
+
+        let mut fst = None;
+        args.borrow().iter().filter(|a| a.contains(text)).take(MAX_VISIBLE).enumerate().for_each(|(idx,a)| {
+            if idx == 0 {
+                let lbox = ListBoxRow::new();
+                lbox.set_child(Some(&Label::new(Some(&a))));
+            fst = Some(lbox);
+            fuzzy.append(fst.as_ref().unwrap());
+            } else {
+            fuzzy.append(&Label::new(Some(&a)));
+            }
         });
-        args.borrow()
-            .iter()
-            .filter(|a| a.contains(text))
-            .take(MAX_VISIBLE)
-            .for_each(|a| {
-                fuzzy.add(&Label::new(Some(&a)));
-            });
-        fuzzy.show_all();
-        if fuzzy.get_children().is_empty() {
-            return;
-        }
-        fuzzy.select_row(Some(
-            &fuzzy.get_children()[0]
-                .clone()
-                .downcast::<ListBoxRow>()
-                .unwrap(),
-        ));
+        fuzzy.select_row(fst.as_ref());
     }));
 
     let hide = clone!(win,input,fuzzy =>
     move || {
         win.hide();
         input.set_text("");
-        fuzzy.get_children().iter().for_each(|c| {
-            fuzzy.remove(c);
-        });
-    });
+        remove_all_children(&fuzzy);
+    }
+    );
 
-    win.connect_delete_event(clone!(tx2, hide => move |_, _| {
-        tx2.send("".into()).unwrap();
-        hide();
-        gtk::Inhibit(true)
-    }));
-
-    win.connect_key_press_event(clone!(fuzzy => move |_win, key| match key.get_keyval() {
-        gdk::keys::constants::Escape => {
-            tx2.send("".into()).unwrap();
-            hide();
-            gtk::Inhibit(false)
-        }
-        gdk::keys::constants::Return => {
-            if !fuzzy.get_children().is_empty() {
-                let bin: Label = fuzzy.get_selected_row().unwrap().get_children()[0]
-                    .clone()
+    input.connect_activate(clone!(fuzzy, tx2, hide => move|_|{
+            if let Some(row) = fuzzy.get_selected_row() {
+                let bin: Label = row.get_child().unwrap()
                     .downcast()
                     .unwrap();
                 tx2.send(bin.get_text().to_string()).unwrap();
@@ -138,28 +121,71 @@ fn start_gui(rx: glib::Receiver<Vec<String>>, tx2: mpsc::Sender<String>) {
                 tx2.send("".into()).unwrap();
             }
             hide();
-            gtk::Inhibit(false)
-        }
-        _ => gtk::Inhibit(false),
     }));
 
-    vbox.add(&input);
-    vbox.add(&fuzzy);
-    win.add(&vbox);
+    ev.connect_key_pressed(clone!(fuzzy => move |_ev, key,_keycode, _m| match key {
+        gdk::keys::constants::Escape => {
+            tx2.send("".into()).unwrap();
+            hide();
+            Inhibit(false)
+        }
+        gdk::keys::constants::Return => {
+            if let Some(row) = fuzzy.get_selected_row() {
+                let bin: Label = row.get_child().unwrap()
+                    .downcast()
+                    .unwrap();
+                tx2.send(bin.get_text().to_string()).unwrap();
+            } else {
+                tx2.send("".into()).unwrap();
+            }
+            hide();
+            Inhibit(false)
+        }
+        _ => Inhibit(false),
+    }));
 
-    rx.attach(None, move |new_args| {
-        let mut args = args.borrow_mut();
-        *args = new_args;
-        args.iter().take(MAX_VISIBLE).for_each(|a| {
-            fuzzy.add(&Label::new(Some(&a)));
-        });
-        fuzzy.select_row(Some(
-            &fuzzy.get_children()[0]
-                .clone()
-                .downcast::<ListBoxRow>()
-                .unwrap(),
-        ));
-        win.show_all();
-        glib::Continue(true)
+    vbox.append(&input);
+    vbox.append(&fuzzy);
+    win.set_child(Some(&vbox));
+    win.add_controller(&ev);
+
+    rx.attach(
+        None,
+        clone!(win => move |new_args| {
+            let mut args = args.borrow_mut();
+            *args = new_args;
+
+            let mut fst = None;
+            args.iter().take(MAX_VISIBLE).enumerate().for_each(|(idx,a)| {
+                if idx == 0 {
+                    let lbox = ListBoxRow::new();
+                    lbox.set_child(Some(&Label::new(Some(&a))));
+                fst = Some(lbox);
+                fuzzy.append(fst.as_ref().unwrap());
+                } else {
+                fuzzy.append(&Label::new(Some(&a)));
+                }
+            });
+            fuzzy.select_row(fst.as_ref());
+
+            win.present();
+            glib::Continue(true)
+        }),
+    );
+
+    let app = Application::new(None, gio::ApplicationFlags::empty()).unwrap();
+    app.connect_startup(move |app| {
+        app.add_window(&win);
     });
+    app.connect_activate(|_| {});
+    app.run(&[]);
+}
+
+// helper
+fn remove_all_children(fuzzy: &ListBox) {
+    let listmodel = fuzzy.observe_children();
+    while let Some(o) = listmodel.get_object(0) {
+        let widget = o.clone().downcast::<gtk::Widget>().unwrap();
+        fuzzy.remove(&widget);
+    }
 }
