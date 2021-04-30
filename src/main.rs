@@ -10,6 +10,9 @@ use std::net::TcpStream;
 use std::rc::Rc;
 use std::sync::mpsc;
 
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
+
 const MAX_VISIBLE: usize = 10;
 const ADDRESS: &str = "127.0.0.1:38451";
 
@@ -81,19 +84,27 @@ fn start_gui(rx: glib::Receiver<Vec<String>>, tx2: mpsc::Sender<String>) {
     let input = Entry::new();
     let fuzzy = ListBox::new();
 
+    let matcher = SkimMatcherV2::default();
+
     input.connect_changed(clone!(fuzzy,args => move |ent| {
         let text = ent.get_text();
         let text = text.as_str();
         fuzzy.get_children().iter().for_each(|c| {
             fuzzy.remove(c);
         });
-        args.borrow()
+        let args = args.borrow();
+        let mut matches: Vec<(i64,&String)> = args
             .iter()
-            .filter(|a| a.contains(text))
-            .take(MAX_VISIBLE)
+            .filter_map(|imatch|Some((matcher.fuzzy_match(imatch, text)?,imatch)))
+            .take(MAX_VISIBLE).collect();
+
+            matches.sort_by_key(|(k,_)|*k);
+
+            matches.into_iter().rev()
             .for_each(|a| {
-                fuzzy.add(&Label::new(Some(&a)));
+                fuzzy.add(&Label::new(Some(&a.1)));
             });
+
         fuzzy.show_all();
         if fuzzy.get_children().is_empty() {
             return;
